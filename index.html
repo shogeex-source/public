@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#fbf8ff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#121318" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="終電カウントダウン">
+<meta name="description" content="終電・始発までの残り時間を表示するカウントダウンアプリ">
+<title>時刻表カウントダウン Web</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap">
+<style>
+/* Layout: スマホ全画面の1カラムアプリ。PCでは中央に最大520pxで表示 */
+:root {
+  --page: #e6e7ef; --surface: #fbf8ff; --surface-2: #ebe9f5; --on-surface: #1b1b21; --on-variant: #46464f; --outline: #777680;
+  --primary: #4355b9; --on-primary: #ffffff; --primary-cont: #dee0ff; --on-primary-cont: #00105c;
+  --error: #ba1a1a; --alarm: #e0201b; --yellow: #e6a700; --scrim: rgb(0 0 0 / .36);
+  --f-app: "Noto Sans JP", "Hiragino Sans", "Yu Gothic", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --page: #08090c; --surface: #121318; --surface-2: #24252d; --on-surface: #e4e1e9; --on-variant: #c7c5d0; --outline: #90909a;
+  --primary: #bac3ff; --on-primary: #0c2385; --primary-cont: #2a3c9f; --on-primary-cont: #dee0ff;
+  --error: #ffb4ab; --alarm: #ff4d45; --yellow: #ffe03a; --scrim: rgb(0 0 0 / .55); color-scheme: dark;
+} }
+:root[data-theme="dark"] {
+  --page: #08090c; --surface: #121318; --surface-2: #24252d; --on-surface: #e4e1e9; --on-variant: #c7c5d0; --outline: #90909a;
+  --primary: #bac3ff; --on-primary: #0c2385; --primary-cont: #2a3c9f; --on-primary-cont: #dee0ff;
+  --error: #ffb4ab; --alarm: #ff4d45; --yellow: #ffe03a; --scrim: rgb(0 0 0 / .55); color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; font-size: 14px; }
+[hidden] { display: none !important; }
+:root { color-scheme: light; }
+html, body { height: 100%; }
+body { background: var(--page); color: var(--on-surface); font-family: var(--f-app); overflow: hidden; -webkit-tap-highlight-color: transparent; }
+#app { position: fixed; inset: 0; max-width: 520px; margin: 0 auto; background: var(--surface); overflow: hidden; }
+@media (min-width: 560px) { #app { box-shadow: 0 0 40px rgb(0 0 0 / .12); } }
+.screen { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--surface); animation: slide .2s ease-out;
+  padding-left: env(safe-area-inset-left, 0px); padding-right: env(safe-area-inset-right, 0px); }
+@keyframes slide { from { transform: translateX(20px); opacity: .5; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .screen, .menu, .dialog { animation: none !important; } }
+
+.appbar { flex: none; display: flex; align-items: center; gap: 4px; min-height: 56px; padding: env(safe-area-inset-top, 0px) 4px 0 16px; }
+.appbar.has-back { padding-left: 4px; }
+.appbar-title { flex: 1; min-width: 0; font-size: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.icon-btn { width: 48px; height: 48px; border: 0; border-radius: 50%; background: transparent; color: var(--on-variant);
+  display: grid; place-items: center; cursor: pointer; flex: none; }
+.icon-btn:active { background: color-mix(in srgb, var(--on-surface) 10%, transparent); }
+svg { width: 24px; height: 24px; fill: currentColor; }
+button:focus-visible, .tile:focus-visible, input:focus-visible, .wheel:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.text-btn { border: 0; background: transparent; color: var(--primary); font: 500 15px var(--f-app); padding: 10px 14px; border-radius: 20px; cursor: pointer; }
+.text-btn:disabled { color: color-mix(in srgb, var(--on-surface) 38%, transparent); cursor: default; }
+.body { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+
+/* ① リスト */
+.list { padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px)); overscroll-behavior: contain; }
+.tile { height: 56px; display: flex; align-items: center; gap: 8px; padding: 0 12px 0 16px; cursor: pointer; background: var(--surface);
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: pan-y; position: relative; }
+.tile:active, .tile.pressing { background: color-mix(in srgb, var(--on-surface) 9%, var(--surface)); }
+.tile.pressing { transition: background .5s; }
+.tile.lifted { z-index: 3; background: var(--surface-2); box-shadow: 0 6px 18px rgb(0 0 0 / .25); border-radius: 4px; }
+.tile-title { flex: 1; min-width: 0; font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tile-time { flex: none; font-size: 14px; color: var(--on-variant); font-variant-numeric: tabular-nums; }
+.tile svg { color: var(--on-variant); flex: none; }
+.empty { height: 100%; display: grid; place-items: center; padding: 24px; text-align: center; color: var(--on-variant); }
+.fab { position: absolute; right: calc(16px + env(safe-area-inset-right, 0px)); bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  width: 56px; height: 56px; border-radius: 16px; border: 0; background: var(--primary-cont); color: var(--on-primary-cont);
+  display: grid; place-items: center; cursor: pointer; box-shadow: 0 3px 8px rgb(0 0 0 / .22); }
+
+/* ② カウントダウン */
+.cd { flex: 1; display: grid; place-items: center; padding: 24px 16px calc(56px + env(safe-area-inset-bottom, 0px)); text-align: center; }
+.cd-inner { display: grid; justify-items: center; max-width: 100%; }
+.cd-title { font-size: 22px; line-height: 1.4; text-wrap: balance; }
+.cd-main { margin-top: 36px; font-size: clamp(30px, 10vw, 52px); font-weight: 700; white-space: nowrap; color: var(--alarm);
+  font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+.cd-main.miss { color: var(--yellow); font-size: clamp(40px, 13vw, 64px); }
+.cd-sub { margin-top: 16px; font-size: 14px; color: var(--outline); }
+.menu { position: absolute; top: calc(48px + env(safe-area-inset-top, 0px)); right: calc(8px + env(safe-area-inset-right, 0px)); z-index: 10;
+  min-width: 168px; padding: 8px 0; border-radius: 4px; background: var(--surface-2); box-shadow: 0 6px 20px rgb(0 0 0 / .22);
+  animation: pop .15s ease-out; transform-origin: top right; }
+@keyframes pop { from { transform: scale(.85); opacity: 0; } to { transform: none; opacity: 1; } }
+.menu button { width: 100%; height: 48px; border: 0; background: transparent; display: flex; align-items: center; gap: 12px;
+  padding: 0 16px; font: 400 16px var(--f-app); color: var(--on-surface); cursor: pointer; }
+.menu .danger { color: var(--error); }
+.scrim { position: absolute; inset: 0; z-index: 20; background: var(--scrim); display: grid; place-items: center; padding: 24px; }
+.dialog { width: 100%; max-width: 320px; background: var(--surface-2); border-radius: 28px; padding: 24px 24px 16px; animation: pop .15s ease-out; transform-origin: center; }
+.dialog h2 { margin: 0 0 12px; font-size: 22px; font-weight: 400; }
+.dialog p { margin: 0 0 20px; font-size: 14px; color: var(--on-variant); line-height: 1.6; }
+.dialog .actions { display: flex; justify-content: flex-end; gap: 4px; }
+.dialog .del { color: var(--error); }
+
+/* ③ 設定 */
+.edit { padding: 16px 16px calc(24px + env(safe-area-inset-bottom, 0px)); display: grid; align-content: start; }
+.field { display: grid; gap: 4px; }
+.field span { font-size: 12px; color: var(--primary); padding-left: 4px; }
+.field input { height: 54px; border: 1px solid var(--outline); border-radius: 4px; padding: 0 14px; font: 400 16px var(--f-app);
+  background: transparent; color: var(--on-surface); width: 100%; }
+.field input:focus { border-color: var(--primary); outline: 2px solid var(--primary); outline-offset: -2px; }
+.lbl { margin-top: 32px; font-size: 14px; font-weight: 500; }
+.picker { position: relative; margin-top: 8px; height: 180px; display: flex; justify-content: center; align-items: center; gap: 8px; }
+.picker-band { position: absolute; left: 8px; right: 8px; top: 72px; height: 36px; border-radius: 8px; background: color-mix(in srgb, var(--on-surface) 7%, transparent); pointer-events: none; }
+.wheel { position: relative; z-index: 1; width: 80px; height: 180px; overflow-y: scroll; scroll-snap-type: y mandatory; padding-block: 72px;
+  scrollbar-width: none; overscroll-behavior: contain;
+  -webkit-mask-image: linear-gradient(transparent, #000 35%, #000 65%, transparent); mask-image: linear-gradient(transparent, #000 35%, #000 65%, transparent); }
+.wheel::-webkit-scrollbar { display: none; }
+.wi { height: 36px; display: grid; place-items: center; scroll-snap-align: center; font-size: 22px; color: var(--on-variant);
+  font-variant-numeric: tabular-nums; cursor: pointer; user-select: none; }
+.wi.sel { color: var(--on-surface); font-weight: 500; }
+.colon { position: relative; z-index: 1; font-size: 22px; font-weight: 500; }
+.filled { margin-top: 24px; height: 44px; border: 0; border-radius: 22px; background: var(--primary); color: var(--on-primary);
+  font: 500 15px var(--f-app); cursor: pointer; }
+.filled:disabled { background: color-mix(in srgb, var(--on-surface) 12%, transparent); color: color-mix(in srgb, var(--on-surface) 38%, transparent); cursor: default; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script>
+(() => {
+  const $ = (s, r = document) => r.querySelector(s);
+  const pad = n => String(n).padStart(2, '0');
+  const esc = s => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const WINDOW = 3 * 3600e3; // 出発の3時間前からカウントダウン
+  const ICON = {
+    back: '<svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>',
+    gear: '<svg viewBox="0 0 24 24"><path d="M19.14 12.94a7.07 7.07 0 0 0 0-1.88l2.03-1.58a.48.48 0 0 0 .12-.61l-1.92-3.32a.48.48 0 0 0-.59-.21l-2.39.96a7 7 0 0 0-1.62-.94l-.36-2.54A.48.48 0 0 0 13.93 2h-3.84a.48.48 0 0 0-.48.41l-.36 2.54a7.4 7.4 0 0 0-1.62.94l-2.39-.96a.48.48 0 0 0-.59.21L2.73 8.47a.47.47 0 0 0 .12.61l2.03 1.58a7.07 7.07 0 0 0 0 1.88l-2.03 1.58a.48.48 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.21l2.39-.96c.5.38 1.04.7 1.62.94l.36 2.54c.05.24.25.41.48.41h3.84c.24 0 .44-.17.48-.41l.36-2.54a7.4 7.4 0 0 0 1.62-.94l2.39.96c.22.08.47 0 .59-.21l1.92-3.32a.48.48 0 0 0-.12-.61l-2.03-1.58zM12 15.6a3.6 3.6 0 1 1 0-7.2 3.6 3.6 0 0 1 0 7.2z"/></svg>',
+    chev: '<svg viewBox="0 0 24 24"><path d="M10 6 8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>',
+    add: '<svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>',
+    edit: '<svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM5.92 19H5v-.92l9.06-9.06.92.92L5.92 19zM20.71 5.63l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83a1 1 0 0 0 0-1.41z"/></svg>',
+    del: '<svg viewBox="0 0 24 24"><path d="M16 9v10H8V9h8m-1.5-6h-5l-1 1H5v2h14V4h-3.5l-1-1zM18 7H6v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7z"/></svg>',
+  };
+
+  // ---------- 計算 ----------
+  function remainingFor(t, n) {
+    const s = t.second || 0;
+    let next = new Date(n.getFullYear(), n.getMonth(), n.getDate(), t.hour, t.minute, s);
+    if (!(next > n)) next = new Date(n.getFullYear(), n.getMonth(), n.getDate() + 1, t.hour, t.minute, s);
+    const ms = next - n;
+    return ms > WINDOW ? { missed: true } : { missed: false, ms };
+  }
+  function label(ms) {
+    const total = Math.floor((ms + 999) / 1000);
+    const h = Math.floor(total / 3600), m = Math.floor((total % 3600) / 60), s = total % 60;
+    if (h > 0) return `${h}時間 ${m}分 ${s}秒`;
+    if (m > 0) return `${m}分 ${s}秒`;
+    return `${s}秒`;
+  }
+  const timeLabel = t => `${pad(t.hour)}:${pad(t.minute)}${t.second ? ':' + pad(t.second) : ''}`;
+
+  // ---------- 保存（この端末のブラウザ内） ----------
+  const KEY = 'timetable-web-v2';
+  let items = null;
+  try { items = JSON.parse(localStorage.getItem(KEY)); } catch (e) {}
+  if (!Array.isArray(items)) {
+    // 初めて開いたとき：残り 5分30秒 の終電を1件だけ用意する
+    const d = new Date(Date.now() + 5.5 * 60e3);
+    items = [{ id: 'tx1', title: '秋葉原発つくばエクスプレス線快速の終電', hour: d.getHours(), minute: d.getMinutes(), second: d.getSeconds() }];
+    persist();
+  }
+  function persist() { try { localStorage.setItem(KEY, JSON.stringify(items)); } catch (e) {} }
+  const byId = id => items.find(t => t.id === id);
+
+  // ---------- 画面遷移 ----------
+  let stack = [{ name: 'list' }];
+  const top = () => stack[stack.length - 1];
+  const push = v => { stack.push(v); render(); };
+  const back = () => { stack.pop(); render(); };
+  const app = $('#app');
+  function render() {
+    const v = top();
+    if (v.name === 'list') renderList();
+    else if (v.name === 'countdown') renderCountdown(v.id);
+    else renderEdit(v.id);
+  }
+
+  // ① リスト
+  function renderList() {
+    app.innerHTML = `<div class="screen">
+      <div class="appbar"><span class="appbar-title">時刻表カウントダウン</span></div>
+      <div class="body list" id="list">${items.length ? items.map(t => `
+        <div class="tile" tabindex="0" data-id="${t.id}">
+          <span class="tile-title">${esc(t.title)}</span><span class="tile-time">${timeLabel(t)}</span>${ICON.chev}
+        </div>`).join('') : '<div class="empty">右下の ＋ からタイマーを追加してください</div>'}
+      </div>
+      <button class="fab" id="fab" aria-label="新規作成">${ICON.add}</button></div>`;
+    $('#fab').onclick = () => push({ name: 'edit', id: null });
+    bindReorder($('#list'));
+  }
+
+  // 約0.5秒の長押しで浮き上がり、ドラッグで並び替え
+  let press = null, suppressClick = false;
+  function bindReorder(list) {
+    list.addEventListener('pointerdown', e => {
+      const el = e.target.closest('.tile');
+      if (!el || e.button !== 0) return;
+      el.classList.add('pressing');
+      press = { el, list, id: el.dataset.id, sx: e.clientX, sy: e.clientY, active: false, pid: e.pointerId, timer: setTimeout(startDrag, 500) };
+    });
+    list.addEventListener('click', e => {
+      const el = e.target.closest('.tile');
+      if (!el) return;
+      if (suppressClick) { suppressClick = false; return; }
+      push({ name: 'countdown', id: el.dataset.id });
+    });
+    list.addEventListener('keydown', e => { const el = e.target.closest('.tile'); if (el && e.key === 'Enter') push({ name: 'countdown', id: el.dataset.id }); });
+    list.addEventListener('contextmenu', e => { if (e.target.closest('.tile')) e.preventDefault(); });
+    list.addEventListener('touchmove', e => { if (press && press.active) e.preventDefault(); }, { passive: false });
+  }
+  function startDrag() {
+    if (!press) return;
+    press.active = true;
+    press.el.classList.remove('pressing');
+    press.el.classList.add('lifted');
+    press.h = press.el.offsetHeight;
+    press.start = press.cur = items.findIndex(t => t.id === press.id);
+    try { navigator.vibrate && navigator.vibrate(10); } catch (e) {}
+    try { press.el.setPointerCapture(press.pid); } catch (e) {}
+  }
+  function cancelPress() {
+    if (!press) return;
+    clearTimeout(press.timer);
+    press.el.classList.remove('pressing', 'lifted');
+    press.el.style.transform = '';
+    press = null;
+  }
+  document.addEventListener('pointermove', e => {
+    if (!press || e.pointerId !== press.pid) return;
+    if (!press.active) { if (Math.hypot(e.clientX - press.sx, e.clientY - press.sy) > 8) cancelPress(); return; }
+    const dy = e.clientY - press.sy;
+    const desired = Math.max(0, Math.min(items.length - 1, press.start + Math.round(dy / press.h)));
+    if (desired !== press.cur) {
+      const [it] = items.splice(press.cur, 1);
+      items.splice(desired, 0, it);
+      const tiles = [...press.list.querySelectorAll('.tile')].filter(t => t !== press.el);
+      press.list.insertBefore(press.el, tiles[desired] || null);
+      press.cur = desired;
+    }
+    press.el.style.transform = `translateY(${dy - (press.cur - press.start) * press.h}px)`;
+  });
+  function endPress(e) {
+    if (!press || e.pointerId !== press.pid) return;
+    if (press.active) { suppressClick = true; setTimeout(() => { suppressClick = false; }, 300); persist(); }
+    cancelPress();
+  }
+  document.addEventListener('pointerup', endPress);
+  document.addEventListener('pointercancel', endPress);
+
+  // ② カウントダウン
+  function renderCountdown(id) {
+    const t = byId(id);
+    if (!t) { stack = [{ name: 'list' }]; return render(); }
+    app.innerHTML = `<div class="screen">
+      <div class="appbar has-back">
+        <button class="icon-btn" id="back" aria-label="戻る">${ICON.back}</button>
+        <span class="appbar-title">${esc(t.title)}</span>
+        <button class="icon-btn" id="gear" aria-label="設定" aria-haspopup="menu">${ICON.gear}</button>
+      </div>
+      <div class="cd"><div class="cd-inner">
+        <div class="cd-title">${esc(t.title)}</div>
+        <div class="cd-main" id="cd-main"></div>
+        <div class="cd-sub" id="cd-sub"></div>
+      </div></div>
+      <div class="menu" id="menu" role="menu" hidden>
+        <button role="menuitem" id="m-edit">${ICON.edit}編集</button>
+        <button role="menuitem" class="danger" id="m-del">${ICON.del}削除</button>
+      </div>
+      <div class="scrim" id="dlg" hidden>
+        <div class="dialog" role="alertdialog" aria-labelledby="dlg-h">
+          <h2 id="dlg-h">削除しますか？</h2>
+          <p>「${esc(t.title)}」を削除します。この操作は取り消せません。</p>
+          <div class="actions"><button class="text-btn" id="dlg-no">キャンセル</button><button class="text-btn del" id="dlg-yes">削除</button></div>
+        </div>
+      </div></div>`;
+    updateCountdown();
+    const menu = $('#menu');
+    $('#back').onclick = back;
+    $('#gear').onclick = e => { e.stopPropagation(); menu.hidden = !menu.hidden; };
+    app.querySelector('.screen').addEventListener('click', e => { if (!menu.hidden && !e.target.closest('#menu')) menu.hidden = true; });
+    $('#m-edit').onclick = () => { menu.hidden = true; push({ name: 'edit', id }); };
+    $('#m-del').onclick = () => { menu.hidden = true; $('#dlg').hidden = false; };
+    $('#dlg-no').onclick = () => { $('#dlg').hidden = true; };
+    $('#dlg-yes').onclick = () => { items = items.filter(x => x.id !== id); persist(); stack = [{ name: 'list' }]; render(); };
+  }
+  function updateCountdown() {
+    const v = top();
+    if (v.name !== 'countdown') return;
+    const t = byId(v.id), main = $('#cd-main'), sub = $('#cd-sub');
+    if (!t || !main) return;
+    const r = remainingFor(t, new Date());
+    main.textContent = r.missed ? 'ドンマイ！' : label(r.ms);
+    main.classList.toggle('miss', r.missed);
+    sub.textContent = r.missed ? `${timeLabel(t)} の3時間前からカウントダウン` : `${timeLabel(t)} まで`;
+  }
+
+  // ③ 設定（新規作成・編集）
+  function renderEdit(id) {
+    const init = id ? byId(id) : null;
+    const n = new Date();
+    const d = { hour: init ? init.hour : n.getHours(), minute: init ? init.minute : n.getMinutes() };
+    app.innerHTML = `<div class="screen">
+      <div class="appbar has-back">
+        <button class="icon-btn" id="back" aria-label="戻る">${ICON.back}</button>
+        <span class="appbar-title">${init ? 'タイマーを編集' : '新しいタイマー'}</span>
+        <button class="text-btn" id="save-top">保存</button>
+      </div>
+      <div class="body edit">
+        <label class="field"><span>タイトル</span><input id="title-in" type="text" placeholder="例：秋葉原発つくばエクスプレス線快速の終電" autocomplete="off" enterkeyhint="done"></label>
+        <div class="lbl">時刻（24時間表記）</div>
+        <div class="picker"><div class="picker-band"></div>
+          <div class="wheel" id="wh" tabindex="0" aria-label="時"></div><span class="colon">:</span><div class="wheel" id="wm" tabindex="0" aria-label="分"></div>
+        </div>
+        <button class="filled" id="save-bottom">保存</button>
+      </div></div>`;
+    const input = $('#title-in');
+    input.value = init ? init.title : '';
+    const sync = () => { const ok = input.value.trim() !== ''; $('#save-top').disabled = !ok; $('#save-bottom').disabled = !ok; };
+    input.oninput = sync; sync();
+    input.onkeydown = e => { if (e.key === 'Enter') input.blur(); };
+    wheel($('#wh'), 24, d.hour, v => d.hour = v);
+    wheel($('#wm'), 60, d.minute, v => d.minute = v);
+    const save = () => {
+      const title = input.value.trim();
+      if (!title) return;
+      if (!init) items.push({ id: 'u' + Date.now(), title, hour: d.hour, minute: d.minute, second: 0 });
+      else {
+        init.title = title;
+        if (init.hour !== d.hour || init.minute !== d.minute) { init.hour = d.hour; init.minute = d.minute; init.second = 0; }
+      }
+      persist(); back();
+    };
+    $('#save-top').onclick = save; $('#save-bottom').onclick = save;
+    $('#back').onclick = back;
+  }
+  function wheel(el, count, value, onChange) {
+    const H = 36;
+    el.innerHTML = Array.from({ length: count }, (_, i) => `<div class="wi">${pad(i)}</div>`).join('');
+    let cur = value;
+    const mark = () => el.querySelectorAll('.wi').forEach((w, i) => w.classList.toggle('sel', i === cur));
+    requestAnimationFrame(() => { el.scrollTop = value * H; mark(); });
+    el.addEventListener('scroll', () => {
+      const v = Math.max(0, Math.min(count - 1, Math.round(el.scrollTop / H)));
+      if (v !== cur) { cur = v; mark(); onChange(v); }
+    });
+    el.addEventListener('click', e => {
+      const w = e.target.closest('.wi');
+      if (w) el.scrollTo({ top: [...el.children].indexOf(w) * H, behavior: 'smooth' });
+    });
+    el.addEventListener('keydown', e => {
+      if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+      e.preventDefault();
+      el.scrollTo({ top: Math.max(0, Math.min(count - 1, cur + (e.key === 'ArrowDown' ? 1 : -1))) * H, behavior: 'smooth' });
+    });
+    mark();
+  }
+
+  // ---------- 1秒ごとの更新（アプリに戻ったときも即座に再計算） ----------
+  let lastSec = -1;
+  setInterval(() => { const s = Math.floor(Date.now() / 1000); if (s !== lastSec) { lastSec = s; updateCountdown(); } }, 200);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) updateCountdown(); });
+
+  render();
+})();
+</script>
+</body>
+</html>
